@@ -127,3 +127,63 @@ def build_cart_text(user_id):
 
     lines.append(f"\nجمع کل: {format_price(total)}")
     return "\n".join(lines), total
+
+
+# ====== کیبوردهای فلوی سفارش جدید ======
+
+def categories_keyboard():
+    categories = db.get_active_categories()
+    buttons = []
+    row = []
+    for cat in categories:
+        emoji = cat["emoji"] or "🍴"
+        row.append(InlineKeyboardButton(f"{emoji} {cat['name']}", callback_data=f"cat_{cat['id']}"))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton(config.BTN_CART, callback_data="nav_cart")])
+    return InlineKeyboardMarkup(buttons)
+
+
+def products_keyboard(category_id):
+    products = db.get_active_products_by_category(category_id)
+    buttons = []
+    row = []
+    for p in products:
+        row.append(InlineKeyboardButton(p["name"], callback_data=f"prod_{p['id']}"))
+        if len(row) == 3:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([
+        InlineKeyboardButton(config.BTN_BACK_CATEGORIES, callback_data="nav_categories"),
+        InlineKeyboardButton(config.BTN_CART, callback_data="nav_cart"),
+    ])
+    return InlineKeyboardMarkup(buttons)
+
+
+def product_detail_keyboard(product_id, qty):
+    buttons = [
+        [
+            InlineKeyboardButton("➖", callback_data=f"pq_dec_{product_id}"),
+            InlineKeyboardButton(str(qty), callback_data="noop"),
+            InlineKeyboardButton("➕", callback_data=f"pq_inc_{product_id}"),
+        ],
+        [InlineKeyboardButton(config.BTN_ADD_TO_CART, callback_data=f"pq_add_{product_id}")],
+        [InlineKeyboardButton(config.BTN_BACK, callback_data=f"pq_back_{product_id}")],
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+
+def product_caption(product):
+    desc = f"\n{product['description']}" if product["description"] else ""
+    return f"{product['name']}\n💰 {format_price(product['price'])}{desc}"
+
+
+# ====== کیبورد اینلاین تأیید کد تخفیف ======
+
+def discount_entry_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton(config.BTN_BACK, callback_data="discount_back")]])
