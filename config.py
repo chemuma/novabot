@@ -44,6 +44,12 @@ BTN_BACK_CATEGORIES = "🔙 دسته‌بندی‌ها"
 BTN_BACK = "🔙 بازگشت"
 BTN_ADD_TO_CART = "🛒 ثبت"
 
+# ====== دکمه‌های پنل گروه سفارشات (State Machine) ======
+BTN_START_PREP = "👨‍🍳 شروع آماده‌سازی"
+BTN_DONE_PREP = "✅ آماده شد"
+BTN_DELIVERED = "✔️ تحویل شد"
+BTN_CANCEL_ORDER = "❌ لغو سفارش"
+
 # ====== Owner Panel ======
 BTN_OWNER_PRODUCTS = "🍽 مدیریت محصولات"
 BTN_OWNER_CATEGORIES = "📂 مدیریت دسته‌بندی‌ها"
