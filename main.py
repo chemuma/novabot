@@ -1,7 +1,4 @@
-"""
-نقطه ورود ربات کافه «نُوا»
-تمام هندلرها اینجا ثبت می‌شوند.
-"""
+
 import logging
 from telegram import Update
 from telegram.ext import (
@@ -59,9 +56,6 @@ def build_app() -> Application:
     )
     app.add_handler(onboarding_conv)
 
-    # ──────────────────────────────────────────
-    # ۲. ویرایش نام
-    # ──────────────────────────────────────────
     edit_name_conv = ConversationHandler(
         entry_points=[
             MessageHandler(
@@ -78,10 +72,7 @@ def build_app() -> Application:
     )
     app.add_handler(edit_name_conv)
 
-    # ──────────────────────────────────────────
-    # ۳. فلوی سبد خرید + پرداخت بیعانه
-    #    (cart_checkout → ConversationHandler برای دریافت رسید)
-    # ──────────────────────────────────────────
+
     cart_checkout_conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(order.cart_callback, pattern="^cart_checkout$"),
@@ -101,9 +92,7 @@ def build_app() -> Application:
     )
     app.add_handler(cart_checkout_conv)
 
-    # ──────────────────────────────────────────
-    # ۴. فلوی رضایت مشتری (ارسال متن/عکس)
-    # ──────────────────────────────────────────
+
     satisfaction_conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(
@@ -124,9 +113,7 @@ def build_app() -> Application:
     )
     app.add_handler(satisfaction_conv)
 
-    # ──────────────────────────────────────────
-    # ۵. Owner Panel — ConversationHandler چندمرحله‌ای
-    # ──────────────────────────────────────────
+
     owner_conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(
@@ -150,9 +137,7 @@ def build_app() -> Application:
     )
     app.add_handler(owner_conv)
 
-    # ──────────────────────────────────────────
-    # ۶. کال‌بک‌های سفارش (انتخاب دسته / محصول / ناوبری)
-    # ──────────────────────────────────────────
+
     app.add_handler(CallbackQueryHandler(order.category_callback, pattern=r"^cat_\d+$"))
     app.add_handler(CallbackQueryHandler(order.product_callback, pattern=r"^prod_\d+$"))
     app.add_handler(CallbackQueryHandler(order.product_quantity_callback, pattern=r"^pq_(inc|dec|add|back)_\d+$"))
