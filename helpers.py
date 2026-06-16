@@ -115,7 +115,49 @@ def estimate_prep_time(category_ids):
 # ====== فرمت قیمت ======
 
 def format_price(amount):
-    return f"{amount:,} تومان"
+    """نمایش مبلغ به هزار تومان (گرد شده)"""
+    if amount == 0:
+        return "رایگان"
+    thousands = amount // 1000
+    remainder = amount % 1000
+    if remainder == 0:
+        return f"{thousands:,} هزار تومن"
+    else:
+        # اگر رقم‌های زیر هزار داشت، با یک اعشار نشون بده
+        return f"{amount/1000:,.1f} هزار تومن"
+
+
+# ====== ساعت کاری کافه ======
+
+def is_cafe_open():
+    """بررسی اینکه آیا کافه الان باز است یا نه."""
+    from datetime import datetime
+    open_str = db.get_setting("open_hour", "9:00")
+    close_str = db.get_setting("close_hour", "23:00")
+    try:
+        now = datetime.now()
+        open_h, open_m = map(int, open_str.split(":"))
+        close_h, close_m = map(int, close_str.split(":"))
+        open_time = now.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
+        close_time = now.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
+        return open_time <= now <= close_time
+    except Exception:
+        return True  # در صورت خطا، اجازه سفارش بده
+
+
+def cafe_closed_text():
+    open_str = db.get_setting("open_hour", "9:00")
+    close_str = db.get_setting("close_hour", "23:00")
+    return (
+        f"😴 نُوا الان استراحت می‌کنه!\n\n"
+        f"ساعت کاری ما از {open_str} تا {close_str} هست.\n"
+        "اون موقع برمی‌گردم و سفارشت رو ثبت می‌کنم ☕"
+    )
+
+
+def get_menu_photo():
+    """آیدی عکس منوی چاپی ذخیره‌شده در settings."""
+    return db.get_setting("menu_photo_file_id")
 
 
 # ====== کیبورد اینلاین سبد خرید ======
