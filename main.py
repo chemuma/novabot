@@ -30,8 +30,16 @@ from handlers import (
 
 logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    level=logging.INFO,
+    level=logging.WARNING,
 )
+# فقط لاگ‌های مهم خود ربات رو نشون بده
+logging.getLogger("nova_bot").setLevel(logging.INFO)
+logging.getLogger("__main__").setLevel(logging.INFO)
+logging.getLogger("handlers").setLevel(logging.INFO)
+# لاگ‌های پرحرف کتابخانه‌ها رو خاموش کن
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -206,7 +214,22 @@ def build_app() -> Application:
     # ──────────────────────────────────────────
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, discount.discount_text_handler))
 
+    app.add_error_handler(error_handler)
+
     return app
+
+
+async def error_handler(update, context):
+    """خطاهای unhandled رو به جای stack trace کامل، خلاصه لاگ می‌کنه."""
+    err = context.error
+    # ChatMigrated رو خودکار handle کن
+    from telegram.error import ChatMigrated
+    if isinstance(err, ChatMigrated):
+        new_id = err.migrate_to_chat_id
+        db.set_setting("orders_group_id_override", str(new_id))
+        logger.warning(f"گروه migrate شد → آیدی جدید {new_id} ذخیره شد")
+        return
+    logger.error(f"خطا: {type(err).__name__}: {err}")
 
 
 if __name__ == "__main__":
