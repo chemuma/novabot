@@ -525,6 +525,7 @@ SETTINGS_FIELDS = {
     "card_number": ("شماره کارت", "text"),
     "cafe_phone": ("شماره تماس کافه", "text"),
     "satisfaction_discount_percent": ("درصد تخفیف رضایت مشتری", "int"),
+    "menu_photo_file_id": ("عکس منوی چاپی (file_id)", "photo"),
 }
 
 
@@ -556,11 +557,20 @@ async def settings_callback_router(update: Update, context: ContextTypes.DEFAULT
         if key not in SETTINGS_FIELDS:
             await query.answer("یافت نشد.", show_alert=True)
             return ConversationHandler.END
-        label, _ = SETTINGS_FIELDS[key]
+        label, value_type = SETTINGS_FIELDS[key]
         context.user_data["owner_flow"] = {"type": "set_edit", "step": 0, "data": {"key": key}}
         await query.answer()
         current = db.get_setting(key, "—")
-        await query.message.reply_text(f"مقدار جدید برای «{label}» رو بفرست (مقدار فعلی: {current}):")
+        if value_type == "photo":
+            cur_display = "تنظیم شده ✅" if current else "تنظیم نشده"
+            await query.message.reply_text(
+                f"عکس جدید منوی چاپی رو بفرست تا جایگزین بشه.\n(وضعیت فعلی: {cur_display})\n"
+                "یا بنویس: ندارد تا عکس حذف بشه."
+            )
+        else:
+            await query.message.reply_text(
+                f"مقدار جدید برای «{label}» رو بفرست (مقدار فعلی: {current}):"
+            )
         return states.OWNER_WAIT_INPUT
 
     await query.answer()
@@ -841,7 +851,15 @@ async def _handle_set_edit(update, context, flow):
     key = flow["data"]["key"]
     label, value_type = SETTINGS_FIELDS[key]
 
-    if value_type == "int":
+    if value_type == "photo":
+        if update.message.photo:
+            value = update.message.photo[-1].file_id
+        elif text in ("ندارد", "-", ""):
+            value = ""
+        else:
+            await update.message.reply_text("لطفاً عکس منو رو مستقیم بفرست (یا بنویس: ندارد):")
+            return states.OWNER_WAIT_INPUT
+    elif value_type == "int":
         if not text.isdigit():
             await update.message.reply_text("لطفاً فقط عدد بفرست:")
             return states.OWNER_WAIT_INPUT

@@ -9,19 +9,31 @@ import helpers
 # ---------- ورود به فلوی سفارش جدید ----------
 
 async def new_order_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.pop("temp_qty", None)
-    categories = db.get_active_categories()
-    if not categories:
+    # بررسی ساعت کاری
+    if not helpers.is_cafe_open():
         await update.message.reply_text(
-            "در حال حاضر دسته‌بندی فعالی برای سفارش وجود ندارد. کمی بعد تلاش کن 🙏",
+            helpers.cafe_closed_text(),
             reply_markup=helpers.main_menu_keyboard(),
         )
         return
 
-    menu_photo = db.get_setting("menu_photo_file_id")
-    text = "🍽 یکی از دسته‌بندی‌های زیر رو انتخاب کن:"
+    context.user_data.pop("temp_qty", None)
+    categories = db.get_active_categories()
+    if not categories:
+        await update.message.reply_text(
+            "فعلاً دسته‌بندی فعالی ندارم که نشونت بدم — بزودی اضافه می‌شه 🙏",
+            reply_markup=helpers.main_menu_keyboard(),
+        )
+        return
+
+    text = "🍽 از کجا شروع کنیم؟ یه دسته‌بندی انتخاب کن:"
+    menu_photo = helpers.get_menu_photo()
     if menu_photo:
-        await update.message.reply_photo(menu_photo, caption=text, reply_markup=helpers.categories_keyboard())
+        await update.message.reply_photo(
+            photo=menu_photo,
+            caption=text,
+            reply_markup=helpers.categories_keyboard(),
+        )
     else:
         await update.message.reply_text(text, reply_markup=helpers.categories_keyboard())
 
@@ -35,17 +47,17 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     category_id = int(query.data.split("_", 1)[1])
     category = db.get_category(category_id)
     if category is None:
-        await query.answer("این دسته‌بندی یافت نشد.", show_alert=True)
+        await query.answer("این دسته‌بندی پیدا نشد.", show_alert=True)
         return
 
     products = db.get_active_products_by_category(category_id)
     emoji = category["emoji"] or "🍴"
-    text = f"{emoji} {category['name']}\n\nیک محصول رو برای مشاهده و افزودن به سبد انتخاب کن:"
-    if not products:
-        text = f"{emoji} {category['name']}\n\nدر حال حاضر موردی در این دسته موجود نیست."
+    if products:
+        text = f"{emoji} {category['name']}\n\nکدوم رو می‌خوای؟"
+    else:
+        text = f"{emoji} {category['name']}\n\nفعلاً چیزی توی این دسته نداریم."
 
     keyboard = helpers.products_keyboard(category_id)
-
     try:
         if query.message.photo:
             await query.edit_message_caption(caption=text, reply_markup=keyboard)
@@ -64,7 +76,7 @@ async def product_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     product_id = int(query.data.split("_", 1)[1])
     product = db.get_product(product_id)
     if product is None or not product["active"]:
-        await query.answer("این محصول موجود نیست.", show_alert=True)
+        await query.answer("این محصول فعلاً موجود نیست.", show_alert=True)
         return
 
     temp_qty = context.user_data.setdefault("temp_qty", {})
@@ -88,7 +100,7 @@ async def product_quantity_callback(update: Update, context: ContextTypes.DEFAUL
     product_id = int(product_id)
     product = db.get_product(product_id)
     if product is None:
-        await query.answer("این محصول یافت نشد.", show_alert=True)
+        await query.answer("این محصول پیدا نشد.", show_alert=True)
         return
 
     temp_qty = context.user_data.setdefault("temp_qty", {})
@@ -111,7 +123,7 @@ async def product_quantity_callback(update: Update, context: ContextTypes.DEFAUL
         user = db.get_or_create_user(telegram_id)
         db.add_to_cart(user["id"], product_id, qty)
         temp_qty.pop(product_id, None)
-        await query.answer("✅ به سبد خرید اضافه شد", show_alert=False)
+        await query.answer(f"✅ {qty} تا «{product['name']}» به سبد اضافه شد", show_alert=False)
         try:
             await query.message.delete()
         except Exception:
@@ -137,10 +149,10 @@ async def nav_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "nav_categories":
         categories = db.get_active_categories()
-        text = "🍽 یکی از دسته‌بندی‌های زیر رو انتخاب کن:"
+        text = "🍽 از کجا شروع کنیم؟ یه دسته‌بندی انتخاب کن:"
         keyboard = helpers.categories_keyboard()
         if not categories:
-            text = "در حال حاضر دسته‌بندی فعالی وجود ندارد."
+            text = "فعلاً دسته‌بندی فعالی نداریم."
         try:
             if query.message.photo:
                 await query.edit_message_caption(caption=text, reply_markup=keyboard)
@@ -164,7 +176,6 @@ async def cart_view_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_cart(message, user_id, context, as_new_message=False, edit_query=None):
-    """نمایش سبد خرید با در نظر گرفتن کد تخفیف فعال در user_data"""
     text, total = helpers.build_cart_text(user_id)
 
     discount_code = context.user_data.get("cart_discount")
@@ -205,11 +216,19 @@ async def cart_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "cart_continue":
         await query.answer()
+        # بررسی ساعت کاری حتی در ادامه خرید
+        if not helpers.is_cafe_open():
+            await query.message.reply_text(helpers.cafe_closed_text())
+            return
         categories = db.get_active_categories()
-        text = "🍽 یکی از دسته‌بندی‌های زیر رو انتخاب کن:"
+        text = "🍽 از کجا شروع کنیم؟ یه دسته‌بندی انتخاب کن:"
         if not categories:
-            text = "در حال حاضر دسته‌بندی فعالی وجود ندارد."
-        await query.message.reply_text(text, reply_markup=helpers.categories_keyboard())
+            text = "فعلاً دسته‌بندی فعالی نداریم."
+        menu_photo = helpers.get_menu_photo()
+        if menu_photo:
+            await query.message.reply_photo(photo=menu_photo, caption=text, reply_markup=helpers.categories_keyboard())
+        else:
+            await query.message.reply_text(text, reply_markup=helpers.categories_keyboard())
 
     elif query.data == "cart_clear":
         db.clear_cart(user["id"])
@@ -221,7 +240,7 @@ async def cart_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         items = db.get_cart_items(user["id"])
         if not items:
-            await query.message.reply_text("سبد خریدت خالیه؛ اول یه چیزی به سبد اضافه کن 🙂")
+            await query.message.reply_text("سبد خریدت خالیه؛ اول یه چیزی اضافه کن 🙂")
             return
         await query.message.reply_text(
             "🎟 کد تخفیفت رو بفرست (مثل ABC5XYZ):",
@@ -230,6 +249,15 @@ async def cart_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["awaiting_discount_code"] = True
 
     elif query.data == "cart_checkout":
+        # بررسی ساعت کاری قبل از ثبت نهایی
+        if not helpers.is_cafe_open():
+            await query.answer()
+            await query.message.reply_text(
+                helpers.cafe_closed_text(),
+                reply_markup=helpers.main_menu_keyboard(),
+            )
+            return ConversationHandler.END
         await query.answer()
+        from telegram.ext import ConversationHandler
         from handlers import checkout
         return await checkout.start_checkout(update, context, user)
