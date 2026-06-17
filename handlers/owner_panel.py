@@ -525,6 +525,7 @@ SETTINGS_FIELDS = {
     "card_number": ("شماره کارت", "text"),
     "cafe_phone": ("شماره تماس کافه", "text"),
     "satisfaction_discount_percent": ("درصد تخفیف رضایت مشتری", "int"),
+    "temp_closed_msg": ("پیام تعطیلی موقت", "text"),
     "menu_photo_file_id": ("عکس منوی چاپی (file_id)", "photo"),
 }
 
@@ -882,4 +883,226 @@ async def _handle_set_edit(update, context, flow):
 async def owner_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("owner_flow", None)
     await update.message.reply_text("عملیات لغو شد.", reply_markup=helpers.owner_menu_keyboard())
+    return ConversationHandler.END
+
+
+# ====== 🚫 تعطیل موقت ======
+
+@_owner_only
+async def toggle_closed_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    current = db.get_setting("temp_closed", "0")
+    if current == "1":
+        db.set_setting("temp_closed", "0")
+        await update.message.reply_text(
+            "✅ کافه دوباره باز شد! مشتریا می‌تونن سفارش بدن.",
+            reply_markup=helpers.owner_menu_keyboard(),
+        )
+    else:
+        kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("✅ بله، تعطیل کن", callback_data="ownr_close_yes"),
+                InlineKeyboardButton("🔙 انصراف", callback_data="ownr_close_no"),
+            ]
+        ])
+        msg_text = db.get_setting("temp_closed_msg", "امروز تعطیلیم! فردا منتظرتونم ☕")
+        await update.message.reply_text(
+            f"آیا می‌خوای کافه رو موقتاً تعطیل کنی؟\n\n"
+            f"پیام فعلی به مشتریان:\n«{msg_text}»\n\n"
+            "برای تغییر پیام، از تنظیمات → «پیام تعطیلی» عوضش کن.",
+            reply_markup=kb,
+        )
+
+
+async def toggle_closed_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not db.is_owner(update.effective_user.id):
+        await query.answer("⛔️ دسترسی ندارید.", show_alert=True)
+        return
+
+    if query.data == "ownr_close_yes":
+        db.set_setting("temp_closed", "1")
+        await query.edit_message_text("🚫 کافه تعطیل شد. مشتریا پیام تعطیلی می‌بینن.")
+        await query.answer("تعطیل شد ✅")
+    else:
+        await query.edit_message_text("لغو شد — کافه همچنان بازه.")
+        await query.answer()
+
+
+# ====== 💾 بکاپ و بازیابی ======
+
+@_owner_only
+async def backup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📤 دریافت بکاپ", callback_data="ownr_backup_send")],
+        [InlineKeyboardButton("📥 بازیابی از فایل", callback_data="ownr_backup_restore")],
+    ])
+    await update.message.reply_text(
+        "💾 بکاپ و بازیابی\n\n"
+        "• «دریافت بکاپ»: یک فایل JSON شامل تنظیمات، محصولات، دسته‌بندی‌ها، "
+        "آمار فروش و کدهای تخفیف برات می‌فرسته.\n"
+        "• «بازیابی از فایل»: فایل JSON بکاپ رو آپلود کن تا اطلاعات بازگردونه بشه.",
+        reply_markup=kb,
+    )
+
+
+async def backup_callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not db.is_owner(update.effective_user.id):
+        await query.answer("⛔️ دسترسی ندارید.", show_alert=True)
+        return ConversationHandler.END
+
+    if query.data == "ownr_backup_send":
+        await query.answer("در حال ساخت بکاپ...")
+        await query.edit_message_text("⏳ در حال ساخت فایل بکاپ...")
+
+        import json
+        from datetime import datetime
+
+        data = _export_backup()
+        json_bytes = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+
+        filename = f"nova_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+        from io import BytesIO
+        buf = BytesIO(json_bytes)
+        buf.name = filename
+
+        await query.message.reply_document(
+            document=buf,
+            filename=filename,
+            caption=(
+                f"💾 بکاپ نُوا — {datetime.now().strftime('%Y/%m/%d %H:%M')}\n"
+                f"شامل: تنظیمات، محصولات، دسته‌بندی‌ها، کدهای تخفیف، آمار فروش\n\n"
+                "⚠️ برای بازیابی این فایل رو از منوی «بکاپ و بازیابی» آپلود کن."
+            ),
+        )
+        return ConversationHandler.END
+
+    if query.data == "ownr_backup_restore":
+        context.user_data["owner_flow"] = {"type": "backup_restore", "step": 0, "data": {}}
+        await query.answer()
+        await query.edit_message_text(
+            "📥 فایل JSON بکاپ رو همینجا آپلود کن.\n\n"
+            "⚠️ این عملیات تنظیمات، محصولات و دسته‌بندی‌های فعلی رو با داده‌های بکاپ جایگزین می‌کنه.\n"
+            "کاربران و سفارش‌های قبلی دست‌نخورده می‌مونن."
+        )
+        return states.OWNER_WAIT_INPUT
+
+    await query.answer()
+    return ConversationHandler.END
+
+
+def _export_backup():
+    """استخراج داده‌های ضروری برای بکاپ (بدون اطلاعات شخصی کاربران)."""
+    from datetime import datetime
+
+    # تنظیمات
+    settings_rows = db.get_all_settings()
+    settings = {r["key"]: r["value"] for r in settings_rows}
+
+    # دسته‌بندی‌ها
+    categories = [dict(r) for r in db.get_all_categories()]
+
+    # محصولات
+    products = []
+    for cat in categories:
+        prods = db.get_all_products_by_category(cat["id"])
+        for p in prods:
+            products.append(dict(p))
+
+    # کدهای تخفیف
+    discount_codes = [dict(r) for r in db.list_discount_codes()]
+
+    # آمار فروش خلاصه (بدون جزئیات سفارش)
+    total_stats, today_stats = db.get_sales_stats()
+
+    return {
+        "version": 1,
+        "exported_at": datetime.now().isoformat(),
+        "settings": settings,
+        "categories": categories,
+        "products": products,
+        "discount_codes": discount_codes,
+        "stats_summary": {
+            "total_orders": total_stats["cnt"],
+            "total_revenue": total_stats["total"],
+        },
+    }
+
+
+async def handle_backup_restore_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دریافت فایل JSON و بازیابی داده‌ها."""
+    if not db.is_owner(update.effective_user.id):
+        return ConversationHandler.END
+
+    flow = context.user_data.get("owner_flow", {})
+    if flow.get("type") != "backup_restore":
+        return ConversationHandler.END
+
+    if not update.message.document:
+        await update.message.reply_text("لطفاً فایل JSON بکاپ رو آپلود کن:")
+        return states.OWNER_WAIT_INPUT
+
+    doc = update.message.document
+    if not doc.file_name.endswith(".json"):
+        await update.message.reply_text("فایل باید با پسوند .json باشه:")
+        return states.OWNER_WAIT_INPUT
+
+    try:
+        file = await context.bot.get_file(doc.file_id)
+        from io import BytesIO
+        buf = BytesIO()
+        await file.download_to_memory(buf)
+        buf.seek(0)
+        import json
+        data = json.loads(buf.read().decode("utf-8"))
+    except Exception as e:
+        await update.message.reply_text(f"⛔️ خطا در خواندن فایل: {e}")
+        context.user_data.pop("owner_flow", None)
+        return ConversationHandler.END
+
+    if data.get("version") != 1:
+        await update.message.reply_text("⛔️ فرمت بکاپ معتبر نیست.")
+        context.user_data.pop("owner_flow", None)
+        return ConversationHandler.END
+
+    # بازیابی تنظیمات
+    for k, v in data.get("settings", {}).items():
+        db.set_setting(k, v)
+
+    # بازیابی دسته‌بندی‌ها
+    import database as _db
+    with _db.db_cursor(commit=True) as cur:
+        for cat in data.get("categories", []):
+            cur.execute(
+                "INSERT OR REPLACE INTO categories (id, name, emoji, prep_time_minutes, sort_order, active) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (cat["id"], cat["name"], cat.get("emoji"), cat.get("prep_time_minutes", 5),
+                 cat.get("sort_order", 0), cat.get("active", 1)),
+            )
+
+        # بازیابی محصولات
+        for p in data.get("products", []):
+            cur.execute(
+                "INSERT OR REPLACE INTO products (id, category_id, name, price, photo_file_id, description, active) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (p["id"], p["category_id"], p["name"], p["price"],
+                 p.get("photo_file_id"), p.get("description"), p.get("active", 1)),
+            )
+
+        # بازیابی کدهای تخفیف
+        for c in data.get("discount_codes", []):
+            cur.execute(
+                "INSERT OR REPLACE INTO discount_codes "
+                "(code, discount_percent, total_capacity, remaining_capacity, expiry_date, active) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (c["code"], c["discount_percent"], c["total_capacity"],
+                 c["remaining_capacity"], c.get("expiry_date"), c.get("active", 1)),
+            )
+
+    context.user_data.pop("owner_flow", None)
+    await update.message.reply_text(
+        "✅ بازیابی با موفقیت انجام شد!\n"
+        "تنظیمات، محصولات، دسته‌بندی‌ها و کدهای تخفیف بازگردونده شدن.",
+        reply_markup=helpers.owner_menu_keyboard(),
+    )
     return ConversationHandler.END

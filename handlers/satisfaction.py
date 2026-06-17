@@ -150,11 +150,11 @@ async def receive_satisfaction_content(update: Update, context: ContextTypes.DEF
 
     db.update_satisfaction_content(satisfaction_id, comment=comment, photo_file_id=photo_file_id)
 
-    # ساخت متن برای گروه رضایت مشتری
+    # ── ارسال به گروه رضایت مشتری ──
     rating = sat["rating"] or 0
-    stars = STARS[rating - 1] if 1 <= rating <= 5 else ""
+    stars = STARS[rating - 1] if 1 <= rating <= 5 else "—"
     group_text = (
-        f"⭐ رضایت جدید\n"
+        f"⭐ نظر جدید\n"
         f"👤 {user['name']}\n"
         f"امتیاز: {stars}\n"
         f"سفارش: {order['display_number']}"
@@ -162,22 +162,23 @@ async def receive_satisfaction_content(update: Update, context: ContextTypes.DEF
     if comment:
         group_text += f"\n\n📝 {comment}"
 
-    if photo_file_id:
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("👍 پسند (تخفیف بده)", callback_data=f"sat_like_{satisfaction_id}")]
-        ])
-        msg = await context.bot.send_photo(
-            chat_id=config.SATISFACTION_GROUP_ID,
-            photo=photo_file_id,
-            caption=group_text,
-            reply_markup=kb,
-        )
-    else:
-        msg = await context.bot.send_message(
-            chat_id=config.SATISFACTION_GROUP_ID, text=group_text
-        )
+    like_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("👍 پسند — تخفیف بده", callback_data=f"sat_like_{satisfaction_id}")]
+    ])
 
-    db.set_satisfaction_group_message(satisfaction_id, msg.message_id)
+    try:
+        msg = await helpers.safe_send(
+            context.bot,
+            helpers.get_satisfaction_group_id,
+            photo=photo_file_id if photo_file_id else None,
+            text=group_text if not photo_file_id else None,
+            caption=group_text if photo_file_id else None,
+            reply_markup=like_kb if photo_file_id else None,
+        )
+        db.set_satisfaction_group_message(satisfaction_id, msg.message_id)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"خطا در ارسال رضایت به گروه: {e}")
 
     await update.message.reply_text(
         "ممنون از وقتت! نظرت برامون خیلی ارزشمنده 🙏", reply_markup=helpers.main_menu_keyboard()

@@ -1,4 +1,3 @@
-from telegram.error import ChatMigrated
 from telegram.ext import ContextTypes, ConversationHandler
 
 import config
@@ -6,39 +5,6 @@ import database as db
 import helpers
 import states
 from handlers import order, order_utils
-
-
-async def _safe_send_to_group(bot, text=None, photo=None, caption=None, reply_markup=None):
-    """
-    ارسال پیام به گروه سفارشات با مدیریت خودکار migrate شدن گروه.
-    آیدی جدید را در دیتابیس ذخیره می‌کند.
-    """
-    group_id = int(db.get_setting("orders_group_id_override", str(config.ORDERS_GROUP_ID)))
-
-    for attempt in range(2):
-        try:
-            if photo:
-                msg = await bot.send_photo(
-                    chat_id=group_id, photo=photo, caption=caption, reply_markup=reply_markup
-                )
-            else:
-                msg = await bot.send_message(
-                    chat_id=group_id, text=text, reply_markup=reply_markup
-                )
-            # اگر آیدی جدیدی داریم، ذخیره کن
-            if group_id != config.ORDERS_GROUP_ID:
-                db.set_setting("orders_group_id_override", str(group_id))
-            return msg
-
-        except ChatMigrated as e:
-            group_id = e.migrate_to_chat_id
-            db.set_setting("orders_group_id_override", str(group_id))
-            # دوباره تلاش می‌کنه با آیدی جدید
-            continue
-        except Exception:
-            raise
-
-    raise RuntimeError("ارسال به گروه سفارشات ناموفق بود.")
 
 
 async def start_checkout(update, context: ContextTypes.DEFAULT_TYPE, user):
@@ -86,7 +52,10 @@ async def start_checkout(update, context: ContextTypes.DEFAULT_TYPE, user):
         kb = order_utils.state_machine_keyboard(config.STATUS_PENDING_PREP, order_id)
 
         try:
-            msg = await _safe_send_to_group(context.bot, text=caption, reply_markup=kb)
+            msg = await helpers.safe_send(
+                context.bot, helpers.get_orders_group_id,
+                text=caption, reply_markup=kb
+            )
             db.set_order_group_message(order_id, msg.message_id)
         except Exception as e:
             import logging
@@ -132,7 +101,10 @@ async def start_checkout(update, context: ContextTypes.DEFAULT_TYPE, user):
         alert_text = order_utils.build_big_order_alert(order_row, user)
 
         try:
-            msg = await _safe_send_to_group(context.bot, text=alert_text)
+            msg = await helpers.safe_send(
+                context.bot, helpers.get_orders_group_id,
+                text=alert_text
+            )
             db.set_order_group_message(order_id, msg.message_id)
         except Exception as e:
             import logging
@@ -173,7 +145,7 @@ async def receive_receipt_photo(update, context: ContextTypes.DEFAULT_TYPE):
 
     # حذف پیام آماده‌باش از گروه
     if order_row["group_message_id"]:
-        group_id = int(db.get_setting("orders_group_id_override", str(config.ORDERS_GROUP_ID)))
+        group_id = helpers.get_orders_group_id()
         try:
             await context.bot.delete_message(chat_id=group_id, message_id=order_row["group_message_id"])
         except Exception:
@@ -187,8 +159,9 @@ async def receive_receipt_photo(update, context: ContextTypes.DEFAULT_TYPE):
     kb = order_utils.state_machine_keyboard(config.STATUS_PENDING_PREP, order_id)
 
     try:
-        msg = await _safe_send_to_group(
-            context.bot, photo=photo_file_id, caption=caption, reply_markup=kb
+        msg = await helpers.safe_send(
+            context.bot, helpers.get_orders_group_id,
+            photo=photo_file_id, caption=caption, reply_markup=kb
         )
         db.set_order_group_message(order_id, msg.message_id)
     except Exception as e:
@@ -216,7 +189,7 @@ async def cancel_checkout(update, context: ContextTypes.DEFAULT_TYPE):
         order_row = db.get_order(order_id)
         if order_row and order_row["status"] == config.STATUS_AWAITING_DEPOSIT:
             db.update_order_status(order_id, config.STATUS_CANCELLED)
-            group_id = int(db.get_setting("orders_group_id_override", str(config.ORDERS_GROUP_ID)))
+            group_id = helpers.get_orders_group_id()
             if order_row["group_message_id"]:
                 try:
                     await context.bot.delete_message(
