@@ -142,6 +142,8 @@ def init_db():
             "card_number": "0000-0000-0000-0000",
             "cafe_phone": "021-00000000",
             "satisfaction_discount_percent": "5",
+            "temp_closed": "0",
+            "temp_closed_msg": "امروز تعطیلیم! فردا منتظرتونم ☕",
         }
         for k, v in defaults.items():
             cur.execute(
@@ -202,6 +204,12 @@ def update_user_info(telegram_id, name=None, phone=None):
 
 
 # ---------- Settings ----------
+
+def get_all_settings():
+    with db_cursor() as cur:
+        cur.execute("SELECT key, value FROM settings")
+        return cur.fetchall()
+
 
 def get_setting(key, default=None):
     with db_cursor() as cur:
@@ -662,3 +670,48 @@ def get_sales_stats():
         )
         today = cur.fetchone()
         return total, today
+
+
+def get_popular_product_ids_in_category(category_id, limit=2):
+    """آیدی محصولات پرفروش یک دسته‌بندی بر اساس تعداد فروش."""
+    with db_cursor() as cur:
+        cur.execute(
+            """SELECT order_items.product_id, SUM(order_items.quantity) as total_sold
+               FROM order_items
+               JOIN products ON products.id = order_items.product_id
+               JOIN orders ON orders.id = order_items.order_id
+               WHERE products.category_id = ?
+                 AND products.active = 1
+                 AND orders.status != 'CANCELLED'
+               GROUP BY order_items.product_id
+               ORDER BY total_sold DESC
+               LIMIT ?""",
+            (category_id, limit),
+        )
+        rows = cur.fetchall()
+        return {r["product_id"] for r in rows}
+
+
+def get_daily_report():
+    """اطلاعات گزارش روزانه: تعداد سفارش، درآمد، پرفروش‌ترین آیتم امروز."""
+    with db_cursor() as cur:
+        cur.execute(
+            """SELECT COUNT(*) as cnt, COALESCE(SUM(total_amount), 0) as revenue
+               FROM orders
+               WHERE status != 'CANCELLED' AND date(created_at) = date('now')"""
+        )
+        day = cur.fetchone()
+
+        cur.execute(
+            """SELECT products.name, SUM(order_items.quantity) as sold
+               FROM order_items
+               JOIN products ON products.id = order_items.product_id
+               JOIN orders ON orders.id = order_items.order_id
+               WHERE orders.status != 'CANCELLED'
+                 AND date(orders.created_at) = date('now')
+               GROUP BY order_items.product_id
+               ORDER BY sold DESC
+               LIMIT 3"""
+        )
+        top = cur.fetchall()
+        return day, top

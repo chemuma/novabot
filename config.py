@@ -12,7 +12,7 @@ OWNER_IDS = [
 # آیدی عددی گروه سفارشات و گروه رضایت مشتری
 # ⚠️ گروه به سوپرگروه migrate شده — آیدی جدید از لاگ:
 ORDERS_GROUP_ID = -1004465991856
-SATISFACTION_GROUP_ID = -5351335799  # اگر این گروه هم migrate شد، آیدی جدیدش رو اینجا بذار
+SATISFACTION_GROUP_ID = -1003989250302
 
 
 # ====== متن دکمه‌های منوی اصلی مشتری ======
@@ -60,6 +60,8 @@ BTN_OWNER_SETTINGS = "⚙️ تنظیمات"
 BTN_OWNER_STATS = "📊 آمار فروش"
 BTN_OWNER_CLUB = "🖼 باشگاه مشتریان"
 BTN_OWNER_SATISFACTION = "⭐ مشاهده رضایت مشتریان"
+BTN_OWNER_TOGGLE_CLOSED = "🚫 تعطیل موقت / باز کردن"
+BTN_OWNER_BACKUP = "💾 بکاپ و بازیابی"
 BTN_OWNER_BACK_MAIN = "🔙 منوی اصلی"
 
 OWNER_MENU_BUTTONS = [
@@ -67,6 +69,7 @@ OWNER_MENU_BUTTONS = [
     [BTN_OWNER_DISCOUNTS, BTN_OWNER_ADMINS],
     [BTN_OWNER_SETTINGS, BTN_OWNER_STATS],
     [BTN_OWNER_CLUB, BTN_OWNER_SATISFACTION],
+    [BTN_OWNER_TOGGLE_CLOSED, BTN_OWNER_BACKUP],
     [BTN_OWNER_BACK_MAIN],
 ]
 

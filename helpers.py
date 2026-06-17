@@ -131,6 +131,9 @@ def format_price(amount):
 
 def is_cafe_open():
     """بررسی اینکه آیا کافه الان باز است یا نه."""
+    # اگر مدیر دستی تعطیل کرده باشه
+    if db.get_setting("temp_closed", "0") == "1":
+        return False
     from datetime import datetime
     open_str = db.get_setting("open_hour", "9:00")
     close_str = db.get_setting("close_hour", "23:00")
@@ -142,16 +145,19 @@ def is_cafe_open():
         close_time = now.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
         return open_time <= now <= close_time
     except Exception:
-        return True  # در صورت خطا، اجازه سفارش بده
+        return True
 
 
 def cafe_closed_text():
+    if db.get_setting("temp_closed", "0") == "1":
+        msg = db.get_setting("temp_closed_msg", "امروز تعطیلیم")
+        return f"🚫 {msg}\n\nبه‌زودی برمی‌گردم ☕"
     open_str = db.get_setting("open_hour", "9:00")
     close_str = db.get_setting("close_hour", "23:00")
     return (
         f"😴 نُوا الان استراحت می‌کنه!\n\n"
-        f"ساعت کاری ما از {open_str} تا {close_str} هست.\n"
-        "اون موقع برمی‌گردم و سفارشت رو ثبت می‌کنم ☕"
+        f"ساعت کاری از {open_str} تا {close_str} هست.\n"
+        "اون موقع برمی‌گردم ☕"
     )
 
 
@@ -208,10 +214,17 @@ def categories_keyboard():
 
 def products_keyboard(category_id):
     products = db.get_active_products_by_category(category_id)
+    # آیتم پرطرفدار فقط برای دسته‌بندی‌هایی با ۵+ آیتم فعال
+    popular_ids = set()
+    if len(products) >= 5:
+        popular_ids = db.get_popular_product_ids_in_category(category_id, limit=2)
+
     buttons = []
     row = []
     for p in products:
-        row.append(InlineKeyboardButton(p["name"], callback_data=f"prod_{p['id']}"))
+        star = "⭐" if p["id"] in popular_ids else ""
+        label = f"{star}{p['name']}{star}" if star else p["name"]
+        row.append(InlineKeyboardButton(label, callback_data=f"prod_{p['id']}"))
         if len(row) == 3:
             buttons.append(row)
             row = []
@@ -246,3 +259,45 @@ def product_caption(product):
 
 def discount_entry_keyboard():
     return InlineKeyboardMarkup([[InlineKeyboardButton(config.BTN_BACK, callback_data="discount_back")]])
+
+
+# ====== ارسال ایمن به گروه‌ها (با مدیریت migrate) ======
+
+def get_orders_group_id():
+    import database as _db, config as _config
+    return int(_db.get_setting("orders_group_id_override", str(_config.ORDERS_GROUP_ID)))
+
+
+def get_satisfaction_group_id():
+    import database as _db, config as _config
+    return int(_db.get_setting("satisfaction_group_id_override", str(_config.SATISFACTION_GROUP_ID)))
+
+
+async def safe_send(bot, group_getter, *, text=None, photo=None, caption=None, reply_markup=None):
+    """
+    ارسال پیام به گروه با retry خودکار در صورت migrate شدن.
+    group_getter: تابعی که chat_id رو برمی‌گردونه (get_orders_group_id یا get_satisfaction_group_id)
+    """
+    import database as _db
+    from telegram.error import ChatMigrated
+
+    group_id = group_getter()
+    for _ in range(2):
+        try:
+            if photo:
+                return await bot.send_photo(
+                    chat_id=group_id, photo=photo, caption=caption, reply_markup=reply_markup
+                )
+            else:
+                return await bot.send_message(
+                    chat_id=group_id, text=text, reply_markup=reply_markup
+                )
+        except ChatMigrated as e:
+            new_id = getattr(e, "new_chat_id", None) or getattr(e, "migrate_to_chat_id", None)
+            if not new_id:
+                raise
+            # ذخیره آیدی جدید برای هر دو گروه (نمی‌دانیم کدام migrate شده)
+            _db.set_setting("orders_group_id_override", str(new_id))
+            _db.set_setting("satisfaction_group_id_override", str(new_id))
+            group_id = new_id
+    raise RuntimeError("ارسال به گروه ناموفق بود")
