@@ -236,9 +236,11 @@ async def admin_like_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
         await context.bot.send_message(
             chat_id=user["telegram_id"],
             text=(
-                f"🎉 مدیر کافه نُوا از عکس/نظرت خوشش اومد!\n"
-                f"یک کد تخفیف {percent}٪ ویژه برات داریم:\n\n"
-                f"🎟 {code}\n\n"
-                "این کد رو موقع ثبت سفارش بعدی در سبد خریدت وارد کن."
+                f"🎉 مدیر کافه نُوا از نظرت خوشش اومد!\n"
+                f"یه کد تخفیف {percent}٪ ویژه برات داریم:\n\n"
+                f"`{code}`\n\n"
+                "_روی کد بالا ضربه بزن تا کپی بشه 👆_\n"
+                "این کد رو موقع سفارش بعدی تو سبد خرید وارد کن."
             ),
+            parse_mode="Markdown",
         )

@@ -823,8 +823,11 @@ async def _handle_disc_add(update, context, flow):
 
         expiry_text = expiry_date or "بدون انقضا"
         await update.message.reply_text(
-            f"✅ کد تخفیف ساخته شد:\n\n🎟 {code}\n"
-            f"درصد: {percent}٪ | ظرفیت: {capacity} | انقضا: {expiry_text}"
+            f"✅ کد تخفیف ساخته شد:\n\n"
+            f"`{code}`\n\n"
+            f"درصد: {percent}٪ | ظرفیت: {capacity} | انقضا: {expiry_text}\n\n"
+            "_روی کد بالا ضربه بزن تا کپی بشه 👆_",
+            parse_mode="Markdown",
         )
         text2, kb = _discount_list_text_and_kb()
         await update.message.reply_text(text2, reply_markup=kb)
