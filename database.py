@@ -396,6 +396,28 @@ def clear_cart(user_id):
         cur.execute("DELETE FROM cart_items WHERE user_id = ?", (user_id,))
 
 
+def update_cart_item_qty(user_id, product_id, delta):
+    """delta مثبت یا منفی. اگر تعداد به صفر رسید، آیتم حذف می‌شود."""
+    with db_cursor(commit=True) as cur:
+        cur.execute(
+            "SELECT id, quantity FROM cart_items WHERE user_id = ? AND product_id = ?",
+            (user_id, product_id),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return
+        new_qty = row["quantity"] + delta
+        if new_qty <= 0:
+            cur.execute("DELETE FROM cart_items WHERE id = ?", (row["id"],))
+        else:
+            cur.execute("UPDATE cart_items SET quantity = ? WHERE id = ?", (new_qty, row["id"]))
+
+
+def remove_cart_item(user_id, product_id):
+    with db_cursor(commit=True) as cur:
+        cur.execute("DELETE FROM cart_items WHERE user_id = ? AND product_id = ?", (user_id, product_id))
+
+
 def get_cart_total(user_id):
     items = get_cart_items(user_id)
     return sum(i["price"] * i["quantity"] for i in items)

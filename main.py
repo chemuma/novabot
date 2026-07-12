@@ -2,7 +2,6 @@
 نقطه ورود ربات نُوا
 """
 import logging
-import os
 
 from telegram import Update
 from telegram.ext import (
@@ -132,6 +131,7 @@ def build_app() -> Application:
     app.add_handler(CallbackQueryHandler(order.product_quantity_callback, pattern=r"^pq_(inc|dec|add|back)_\d+$"))
     app.add_handler(CallbackQueryHandler(order.nav_callback, pattern=r"^(nav_categories|nav_cart|noop)$"))
     app.add_handler(CallbackQueryHandler(order.cart_callback, pattern=r"^cart_(continue|clear|discount)$"))
+    app.add_handler(CallbackQueryHandler(order.cart_edit_callback, pattern=r"^ce_(inc|dec|del)_\d+$"))
     app.add_handler(CallbackQueryHandler(discount.discount_back_callback, pattern="^discount_back$"))
 
     # ── ۷. State Machine ادمین گروه ──
@@ -164,7 +164,6 @@ def build_app() -> Application:
     app.add_handler(MessageHandler(filters.Regex(f"^{config.BTN_OWNER_SETTINGS}$"), owner_panel.settings_handler))
     app.add_handler(MessageHandler(filters.Regex(f"^{config.BTN_OWNER_STATS}$"), owner_panel.stats_handler))
     app.add_handler(MessageHandler(filters.Regex(f"^{config.BTN_OWNER_CLUB}$"), owner_panel.club_handler))
-    app.add_handler(MessageHandler(filters.Regex(f"^{config.BTN_OWNER_SATISFACTION}$"), owner_panel.satisfaction_view_handler))
     app.add_handler(MessageHandler(filters.Regex(f"^{config.BTN_OWNER_TOGGLE_CLOSED}$"), owner_panel.toggle_closed_handler))
     app.add_handler(MessageHandler(filters.Regex(f"^{config.BTN_OWNER_BACKUP}$"), owner_panel.backup_handler))
     app.add_handler(MessageHandler(filters.Regex(f"^{config.BTN_OWNER_BACK_MAIN}$"), owner_panel.back_to_main_handler))
@@ -188,22 +187,16 @@ if __name__ == "__main__":
     application = build_app()
 
     async def post_init(app):
+        # حذف webhook احتمالی باقی‌مانده قبل از شروع polling
+        try:
+            await app.bot.delete_webhook(drop_pending_updates=False)
+            logger.info("Webhook حذف شد — polling شروع می‌شه")
+        except Exception as e:
+            logger.warning(f"delete_webhook: {e}")
         start_scheduler(app.bot)
 
     application.post_init = post_init
 
-    # Railway: اگر WEBHOOK_URL تنظیم شده، از webhook استفاده کن وگرنه polling
-    webhook_url = os.environ.get("WEBHOOK_URL")
-    port = int(os.environ.get("PORT", 8443))
-
-    if webhook_url:
-        logger.info(f"🚀 نُوا با webhook شروع به کار کرد: {webhook_url}")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            webhook_url=webhook_url,
-            allowed_updates=Update.ALL_TYPES,
-        )
-    else:
-        logger.info("🚀 نُوا با polling شروع به کار کرد")
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+    # همیشه polling — Railway نیاز به webhook ندارد
+    logger.info("🚀 نُوا شروع به کار کرد (polling)")
+    application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=False)

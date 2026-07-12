@@ -131,29 +131,38 @@ def format_price(amount):
 
 def is_cafe_open():
     """بررسی اینکه آیا کافه الان باز است یا نه."""
-    # اگر مدیر دستی تعطیل کرده باشه
     if db.get_setting("temp_closed", "0") == "1":
         return False
     from datetime import datetime
     open_str = db.get_setting("open_hour", "9:00")
     close_str = db.get_setting("close_hour", "23:00")
     try:
-        now = datetime.now()
-        open_h, open_m = map(int, open_str.split(":"))
-        close_h, close_m = map(int, close_str.split(":"))
-        open_time = now.replace(hour=open_h, minute=open_m, second=0, microsecond=0)
-        close_time = now.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
-        return open_time <= now <= close_time
+        now_t = datetime.now().time()
+        oh, om = map(int, open_str.split(":"))
+        ch, cm = map(int, close_str.split(":"))
+        from datetime import time as dtime
+        open_t = dtime(oh, om)
+        close_t = dtime(ch, cm)
+        if open_t <= close_t:
+            # کار روزانه معمولی (مثل 9:00 تا 23:00)
+            return open_t <= now_t <= close_t
+        else:
+            # شب‌کاری (مثل 22:00 تا 4:00)
+            return now_t >= open_t or now_t <= close_t
     except Exception:
-        return True
+        return True  # در صورت خطا اجازه سفارش بده
 
 
 def cafe_closed_text():
-    if db.get_setting("temp_closed", "0") == "1":
-        msg = db.get_setting("temp_closed_msg", "امروز تعطیلیم")
-        return f"🚫 {msg}\n\nبه‌زودی برمی‌گردم ☕"
     open_str = db.get_setting("open_hour", "9:00")
     close_str = db.get_setting("close_hour", "23:00")
+    if db.get_setting("temp_closed", "0") == "1":
+        msg = db.get_setting("temp_closed_msg", "امروز تعطیلیم")
+        return (
+            f"🚫 {msg}\n\n"
+            f"ساعت کاری ما از {open_str} تا {close_str} هست.\n"
+            "بعداً برمی‌گردم ☕"
+        )
     return (
         f"😴 نُوا الان استراحت می‌کنه!\n\n"
         f"ساعت کاری از {open_str} تا {close_str} هست.\n"
@@ -166,32 +175,60 @@ def get_menu_photo():
     return db.get_setting("menu_photo_file_id")
 
 
-# ====== کیبورد اینلاین سبد خرید ======
+# ====== کیبورد اینلاین سبد خرید (با ویرایش آیتم‌ها) ======
 
-def cart_inline_keyboard(has_discount=False):
-    buttons = [
-        [InlineKeyboardButton(config.BTN_CHECKOUT, callback_data="cart_checkout")],
-        [InlineKeyboardButton(config.BTN_CART_DISCOUNT, callback_data="cart_discount")],
-        [InlineKeyboardButton(config.BTN_CONTINUE_SHOPPING, callback_data="cart_continue")],
-        [InlineKeyboardButton(config.BTN_CLEAR_CART, callback_data="cart_clear")],
-    ]
+def cart_inline_keyboard(items):
+    """کیبورد سبد خرید با امکان ویرایش تعداد هر آیتم."""
+    buttons = []
+    for item in items:
+        # ردیف نام آیتم (غیرقابل کلیک)
+        buttons.append([
+            InlineKeyboardButton(f"🔹 {item['name']}", callback_data="noop")
+        ])
+        # ردیف کم/زیاد/حذف
+        buttons.append([
+            InlineKeyboardButton("➖", callback_data=f"ce_dec_{item['product_id']}"),
+            InlineKeyboardButton(str(item["quantity"]), callback_data="noop"),
+            InlineKeyboardButton("➕", callback_data=f"ce_inc_{item['product_id']}"),
+            InlineKeyboardButton("🗑", callback_data=f"ce_del_{item['product_id']}"),
+        ])
+    buttons.append([InlineKeyboardButton("─────────────", callback_data="noop")])
+    buttons.append([
+        InlineKeyboardButton(config.BTN_CHECKOUT, callback_data="cart_checkout"),
+        InlineKeyboardButton(config.BTN_CART_DISCOUNT, callback_data="cart_discount"),
+    ])
+    buttons.append([
+        InlineKeyboardButton(config.BTN_CONTINUE_SHOPPING, callback_data="cart_continue"),
+        InlineKeyboardButton(config.BTN_CLEAR_CART, callback_data="cart_clear"),
+    ])
     return InlineKeyboardMarkup(buttons)
 
 
-def build_cart_text(user_id):
+def build_cart_text(user_id, discount_code=None):
     items = db.get_cart_items(user_id)
     if not items:
-        return "🛒 سبد خریدت خالیه.", 0
+        return "🛒 سبد خریدت خالیه.", 0, 0, []
 
-    lines = ["🛒 سبد خرید شما:\n"]
+    lines = ["🛒 سبد خرید:\n"]
     total = 0
     for item in items:
         line_total = item["price"] * item["quantity"]
         total += line_total
-        lines.append(f"• {item['name']} × {item['quantity']} → {format_price(line_total)}")
+        lines.append(f"• {item['name']} × {item['quantity']} ← {format_price(line_total)}")
 
-    lines.append(f"\nجمع کل: {format_price(total)}")
-    return "\n".join(lines), total
+    final_total = total
+    if discount_code:
+        code_row = db.get_discount_code(discount_code)
+        if code_row and code_row["active"]:
+            final_total = apply_discount(total, code_row["discount_percent"])
+            lines.append(f"\n🎟 تخفیف {code_row['discount_percent']}٪ اعمال شد")
+            lines.append(f"جمع کل: {format_price(final_total)} (به‌جای {format_price(total)})")
+        else:
+            lines.append(f"\nجمع کل: {format_price(total)}")
+    else:
+        lines.append(f"\nجمع کل: {format_price(total)}")
+
+    return "\n".join(lines), total, final_total, items
 
 
 # ====== کیبوردهای فلوی سفارش جدید ======
