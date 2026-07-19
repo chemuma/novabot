@@ -622,6 +622,8 @@ async def owner_input_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     flow_type = flow["type"]
 
+    if flow_type == "backup_restore":
+        return await handle_backup_restore_file(update, context)
     if flow_type == "cat_add":
         return await _handle_cat_add(update, context, flow)
     if flow_type == "cat_prep":
@@ -960,34 +962,38 @@ async def backup_callback_router(update: Update, context: ContextTypes.DEFAULT_T
 
         import json
         from datetime import datetime
-
-        data = _export_backup()
-        json_bytes = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
-
-        filename = f"nova_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
         from io import BytesIO
-        buf = BytesIO(json_bytes)
-        buf.name = filename
+        from telegram import InputFile
 
-        await query.message.reply_document(
-            document=buf,
-            filename=filename,
-            caption=(
-                f"💾 بکاپ نُوا — {datetime.now().strftime('%Y/%m/%d %H:%M')}\n"
-                f"شامل: تنظیمات، محصولات، دسته‌بندی‌ها، کدهای تخفیف، آمار فروش\n\n"
-                "⚠️ برای بازیابی این فایل رو از منوی «بکاپ و بازیابی» آپلود کن."
-            ),
-        )
+        try:
+            data = _export_backup()
+            json_bytes = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+            filename = f"nova_backup_{datetime.now().strftime('%Y%m%d_%H%M')}.json"
+            buf = BytesIO(json_bytes)
+
+            await query.message.reply_document(
+                document=InputFile(buf, filename=filename),
+                caption=(
+                    f"💾 بکاپ نُوا — {datetime.now().strftime('%Y/%m/%d %H:%M')}\n"
+                    "شامل: تنظیمات، محصولات، دسته‌بندی‌ها، کدهای تخفیف\n\n"
+                    "برای بازیابی از «💾 بکاپ و بازیابی» → «📥 بازیابی» استفاده کن."
+                ),
+            )
+        except Exception as e:
+            await query.message.reply_text(f"⛔️ خطا در ساخت بکاپ: {e}")
+
         return ConversationHandler.END
 
     if query.data == "ownr_backup_restore":
-        context.user_data["owner_flow"] = {"type": "backup_restore", "step": 0, "data": {}}
         await query.answer()
         await query.edit_message_text(
             "📥 فایل JSON بکاپ رو همینجا آپلود کن.\n\n"
-            "⚠️ این عملیات تنظیمات، محصولات و دسته‌بندی‌های فعلی رو با داده‌های بکاپ جایگزین می‌کنه.\n"
-            "کاربران و سفارش‌های قبلی دست‌نخورده می‌مونن."
+            "⚠️ تنظیمات، محصولات و دسته‌بندی‌های فعلی با داده‌های بکاپ جایگزین می‌شن.\n"
+            "کاربران و سفارش‌های قبلی دست‌نخورده می‌مونن.\n\n"
+            "برای انصراف /cancel بزن."
         )
+        # ست کردن flow در context تا owner_input_handler بدونه منتظر فایله
+        context.user_data["owner_flow"] = {"type": "backup_restore", "step": 0, "data": {}}
         return states.OWNER_WAIT_INPUT
 
     await query.answer()
@@ -1033,79 +1039,109 @@ def _export_backup():
 
 
 async def handle_backup_restore_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """دریافت فایل JSON و بازیابی داده‌ها."""
-    if not db.is_owner(update.effective_user.id):
-        return ConversationHandler.END
+    """دریافت فایل JSON و بازیابی داده‌ها — از owner_input_handler فراخوانی می‌شه."""
+    import json
+    from io import BytesIO
 
-    flow = context.user_data.get("owner_flow", {})
-    if flow.get("type") != "backup_restore":
-        return ConversationHandler.END
-
-    if not update.message.document:
-        await update.message.reply_text("لطفاً فایل JSON بکاپ رو آپلود کن:")
+    if not update.message or not update.message.document:
+        await update.message.reply_text(
+            "📥 لطفاً فایل JSON بکاپ رو آپلود کن.\n/cancel برای انصراف"
+        )
         return states.OWNER_WAIT_INPUT
 
     doc = update.message.document
-    if not doc.file_name.endswith(".json"):
-        await update.message.reply_text("فایل باید با پسوند .json باشه:")
+    if not doc.file_name or not doc.file_name.endswith(".json"):
+        await update.message.reply_text("فایل باید پسوند .json داشته باشه.")
         return states.OWNER_WAIT_INPUT
 
+    if doc.file_size and doc.file_size > 5 * 1024 * 1024:
+        await update.message.reply_text("⛔️ حجم فایل خیلی زیاده (حداکثر ۵ مگابایت).")
+        context.user_data.pop("owner_flow", None)
+        return ConversationHandler.END
+
+    # دانلود فایل
     try:
-        file = await context.bot.get_file(doc.file_id)
-        from io import BytesIO
+        tg_file = await context.bot.get_file(doc.file_id)
         buf = BytesIO()
-        await file.download_to_memory(buf)
+        await tg_file.download_to_memory(out=buf)
         buf.seek(0)
-        import json
-        data = json.loads(buf.read().decode("utf-8"))
+        raw = buf.read().decode("utf-8")
+        data = json.loads(raw)
     except Exception as e:
-        await update.message.reply_text(f"⛔️ خطا در خواندن فایل: {e}")
+        await update.message.reply_text(f"⛔️ خطا در خواندن فایل:\n{e}")
         context.user_data.pop("owner_flow", None)
         return ConversationHandler.END
 
-    if data.get("version") != 1:
-        await update.message.reply_text("⛔️ فرمت بکاپ معتبر نیست.")
+    if not isinstance(data, dict) or data.get("version") != 1:
+        await update.message.reply_text(
+            "⛔️ فرمت بکاپ معتبر نیست. فقط فایل‌های بکاپ خود نُوا قابل بازیابی هستند."
+        )
         context.user_data.pop("owner_flow", None)
         return ConversationHandler.END
 
-    # بازیابی تنظیمات
+    # ─── بازیابی تنظیمات ───
+    restored = {"settings": 0, "categories": 0, "products": 0, "discount_codes": 0}
     for k, v in data.get("settings", {}).items():
-        db.set_setting(k, v)
+        if v is not None:
+            db.set_setting(k, v)
+            restored["settings"] += 1
 
-    # بازیابی دسته‌بندی‌ها
+    # ─── بازیابی دسته‌بندی‌ها + محصولات + کدهای تخفیف ───
     import database as _db
-    with _db.db_cursor(commit=True) as cur:
-        for cat in data.get("categories", []):
-            cur.execute(
-                "INSERT OR REPLACE INTO categories (id, name, emoji, prep_time_minutes, sort_order, active) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (cat["id"], cat["name"], cat.get("emoji"), cat.get("prep_time_minutes", 5),
-                 cat.get("sort_order", 0), cat.get("active", 1)),
-            )
+    try:
+        with _db.db_cursor(commit=True) as cur:
+            for cat in data.get("categories", []):
+                cur.execute(
+                    "INSERT OR REPLACE INTO categories "
+                    "(id, name, emoji, prep_time_minutes, sort_order, active) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        cat["id"], cat["name"], cat.get("emoji"),
+                        cat.get("prep_time_minutes", 5),
+                        cat.get("sort_order", 0), cat.get("active", 1),
+                    ),
+                )
+                restored["categories"] += 1
 
-        # بازیابی محصولات
-        for p in data.get("products", []):
-            cur.execute(
-                "INSERT OR REPLACE INTO products (id, category_id, name, price, photo_file_id, description, active) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (p["id"], p["category_id"], p["name"], p["price"],
-                 p.get("photo_file_id"), p.get("description"), p.get("active", 1)),
-            )
+            for p in data.get("products", []):
+                cur.execute(
+                    "INSERT OR REPLACE INTO products "
+                    "(id, category_id, name, price, photo_file_id, description, active) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        p["id"], p["category_id"], p["name"], p["price"],
+                        p.get("photo_file_id"), p.get("description"), p.get("active", 1),
+                    ),
+                )
+                restored["products"] += 1
 
-        # بازیابی کدهای تخفیف
-        for c in data.get("discount_codes", []):
-            cur.execute(
-                "INSERT OR REPLACE INTO discount_codes "
-                "(code, discount_percent, total_capacity, remaining_capacity, expiry_date, active) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (c["code"], c["discount_percent"], c["total_capacity"],
-                 c["remaining_capacity"], c.get("expiry_date"), c.get("active", 1)),
-            )
+            for c in data.get("discount_codes", []):
+                cur.execute(
+                    "INSERT OR REPLACE INTO discount_codes "
+                    "(code, discount_percent, total_capacity, remaining_capacity, expiry_date, active) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        c["code"], c["discount_percent"], c["total_capacity"],
+                        c["remaining_capacity"], c.get("expiry_date"), c.get("active", 1),
+                    ),
+                )
+                restored["discount_codes"] += 1
+
+    except Exception as e:
+        await update.message.reply_text(f"⛔️ خطا در بازیابی داده:\n{e}")
+        context.user_data.pop("owner_flow", None)
+        return ConversationHandler.END
 
     context.user_data.pop("owner_flow", None)
+    exported_at = data.get("exported_at", "نامشخص")[:16].replace("T", " ")
+
     await update.message.reply_text(
-        "✅ بازیابی با موفقیت انجام شد!\n"
-        "تنظیمات، محصولات، دسته‌بندی‌ها و کدهای تخفیف بازگردونده شدن.",
+        f"✅ بازیابی با موفقیت انجام شد!\n\n"
+        f"📅 تاریخ بکاپ: {exported_at}\n"
+        f"⚙️ تنظیمات: {restored['settings']} مورد\n"
+        f"📂 دسته‌بندی‌ها: {restored['categories']} مورد\n"
+        f"🍽 محصولات: {restored['products']} مورد\n"
+        f"🎟 کدهای تخفیف: {restored['discount_codes']} مورد",
         reply_markup=helpers.owner_menu_keyboard(),
     )
     return ConversationHandler.END
